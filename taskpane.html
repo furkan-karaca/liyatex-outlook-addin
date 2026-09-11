@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liyatex CRM</title>
+<!-- office.js Microsoft tarafından sürümlenir; SRI pinlemesi resmi olarak desteklenmez. -->
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<script src="lib/msal-browser.min.js"></script>
+<script src="config.js"></script>
+<style>
+  :root{--ink:#1f2933;--mut:#6b7280;--line:#e5e7eb;--brand:#0f6278;--brand2:#0b4f61;--ok:#166534;--okbg:#dcfce7;--err:#991b1b;--errbg:#fee2e2;--bg:#fff}
+  *{box-sizing:border-box}
+  body{margin:0;font:13px/1.45 "Segoe UI",system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+  header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--line)}
+  header b{font-size:14px}
+  #user{font-size:11px;color:var(--mut);max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  main{padding:12px}
+  .card{border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px;background:#fafafa}
+  .card h4{margin:0 0 6px;font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.03em}
+  .mail-subj{font-weight:600;word-break:break-word}
+  .mail-meta{color:var(--mut);font-size:12px;word-break:break-word}
+  .tabs{display:flex;gap:4px;margin:8px 0 12px}
+  .tabs button{flex:1;padding:8px 4px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;font:inherit;font-weight:600;color:var(--mut)}
+  .tabs button[aria-selected="true"]{background:var(--brand);border-color:var(--brand);color:#fff}
+  label{display:block;margin:8px 0 3px;font-size:12px;color:var(--mut)}
+  input,select,textarea{width:100%;padding:7px 8px;border:1px solid #cbd5e1;border-radius:6px;font:inherit;background:#fff}
+  textarea{min-height:90px;resize:vertical}
+  .row{display:flex;gap:8px}.row>*{flex:1}
+  .lk{position:relative}
+  .lk ul{position:absolute;z-index:5;left:0;right:0;top:100%;margin:0;padding:0;list-style:none;background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 16px rgba(0,0,0,.12);max-height:180px;overflow:auto}
+  .lk li{padding:6px 8px;cursor:pointer}.lk li:hover,.lk li[aria-selected="true"]{background:#eef6f8}
+  .lk li small{display:block;color:var(--mut)}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:#e6f1f4;color:var(--brand2);border-radius:999px;padding:3px 8px 3px 10px;font-size:12px;margin:4px 4px 0 0}
+  .chip button{border:0;background:none;cursor:pointer;color:inherit;font-size:14px;line-height:1;padding:0}
+  .chk{display:flex;align-items:center;gap:8px;margin-top:10px}.chk input{width:auto}
+  .actions{display:flex;gap:8px;margin-top:14px}
+  .btn{padding:9px 12px;border-radius:6px;border:1px solid var(--brand);background:var(--brand);color:#fff;font:inherit;font-weight:600;cursor:pointer;flex:1}
+  .btn.sec{background:#fff;color:var(--brand)}
+  .btn[disabled]{opacity:.5;cursor:default}
+  .msg{margin-top:10px;padding:8px 10px;border-radius:6px;font-size:12px;display:none;word-break:break-word}
+  .msg.ok{display:block;background:var(--okbg);color:var(--ok)}
+  .msg.err{display:block;background:var(--errbg);color:var(--err)}
+  .msg a{color:inherit;font-weight:600}
+  .hint{font-size:11px;color:var(--mut);margin-top:4px}
+  #login{display:none;text-align:center;padding:30px 12px}
+  #login p{color:var(--mut)}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <b>Liyatex CRM</b>
+  <span id="user" title=""></span>
+</header>
+
+<section id="login">
+  <p>Kayıt açmak için CRM hesabınızla oturum açın.</p>
+  <button class="btn" id="btnLogin" type="button">CRM'e giriş yap</button>
+  <div class="msg" id="loginMsg"></div>
+</section>
+
+<main id="app" hidden>
+  <div class="card">
+    <h4>Açık e-posta</h4>
+    <div class="mail-subj" id="mSubject">—</div>
+    <div class="mail-meta" id="mFrom"></div>
+    <div class="mail-meta" id="mDate"></div>
+    <div class="hint" id="mLinked"></div>
+  </div>
+
+  <div class="card">
+    <h4>Bağlantı</h4>
+    <label for="accQ">Firma</label>
+    <div class="lk"><input id="accQ" autocomplete="off" placeholder="Firma adı yazın…"><ul id="accList" hidden></ul></div>
+    <div id="accChip"></div>
+    <label for="conQ">İlgili kişiler</label>
+    <div class="lk"><input id="conQ" autocomplete="off" placeholder="Kişi adı yazın…"><ul id="conList" hidden></ul></div>
+    <div id="conChips"></div>
+    <div class="hint" id="matchHint"></div>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="task" aria-selected="true">Görev</button>
+    <button type="button" role="tab" data-tab="appt" aria-selected="false">Toplantı</button>
+    <button type="button" role="tab" data-tab="expo" aria-selected="false">Fuar Notu</button>
+  </div>
+
+  <label for="subject">Konu</label>
+  <input id="subject">
+
+  <div id="pTask" role="tabpanel">
+    <div class="row">
+      <div><label for="tType">Görev türü</label>
+        <select id="tType"><option value="">— seçiniz —</option></select></div>
+      <div><label for="tPrio">Öncelik</label>
+        <select id="tPrio"><option value="0">Düşük</option><option value="1" selected>Normal</option><option value="2">Yüksek</option></select></div>
+    </div>
+    <label for="tDue">Termin</label>
+    <input id="tDue" type="date">
+  </div>
+
+  <div id="pAppt" role="tabpanel" hidden>
+    <div class="row">
+      <div><label for="aStart">Başlangıç</label><input id="aStart" type="datetime-local"></div>
+      <div><label for="aEnd">Bitiş</label><input id="aEnd" type="datetime-local"></div>
+    </div>
+    <label for="aLoc">Yer</label>
+    <input id="aLoc">
+    <label for="aSeason">Sunulan sezon</label>
+    <select id="aSeason"><option value="">— boş —</option></select>
+  </div>
+
+  <div id="pExpo" role="tabpanel" hidden>
+    <label for="eFair">Fuar</label>
+    <select id="eFair"><option value="">— seçiniz —</option></select>
+    <div class="row">
+      <div><label for="eKind">Amaç</label>
+        <select id="eKind"><option value="599960000">Ziyaret</option><option value="599960001">Talep</option></select></div>
+      <div><label for="eDate">Ziyaret tarihi</label><input id="eDate" type="date"></div>
+    </div>
+  </div>
+
+  <label for="desc">Açıklama / Not</label>
+  <textarea id="desc"></textarea>
+  <div class="hint">E-postanın metni açıklamaya eklendi; gerekirse kısaltın.</div>
+
+  <div class="chk"><input type="checkbox" id="saveMail" checked><label for="saveMail" style="margin:0;color:var(--ink)">E-postayı da CRM'e kaydet ve firmaya bağla</label></div>
+
+  <div class="actions">
+    <button class="btn" id="btnSave" type="button">CRM'de oluştur</button>
+  </div>
+  <div class="msg" id="msg"></div>
+</main>
+
+<script src="taskpane.js"></script>
+</body>
+</html>

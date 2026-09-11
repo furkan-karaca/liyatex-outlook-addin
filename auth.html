@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Liyatex CRM — Oturum</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<script src="lib/msal-browser.min.js"></script>
+<script src="config.js"></script>
+<style>body{font:14px system-ui,sans-serif;padding:24px;color:#333}</style>
+</head>
+<body>
+<p id="msg">CRM oturumu açılıyor…</p>
+<script>
+// Office iletişim kutusunda çalışır: yönlendirmeli MSAL akışıyla Dataverse jetonu alır ve ana panele geri yollar.
+(function(){
+  var C = window.LIY_CFG;
+  var SCOPES = [C.CRM_URL + "/user_impersonation"];
+  var msal = new window.msal.PublicClientApplication({
+    auth: { clientId: C.CLIENT_ID, authority: "https://login.microsoftonline.com/" + C.TENANT_ID, redirectUri: C.HOST_URL + "/auth.html", navigateToLoginRequestUrl: false },
+    cache: { cacheLocation: "localStorage" }
+  });
+  function send(obj){
+    var s = JSON.stringify(obj);
+    if (window.Office && Office.context && Office.context.ui) { Office.context.ui.messageParent(s); }
+    else { document.getElementById("msg").textContent = obj.ok ? "Oturum açıldı, bu pencereyi kapatabilirsiniz." : ("Hata: " + obj.error); }
+  }
+  function tokenFor(account){
+    return msal.acquireTokenSilent({ scopes: SCOPES, account: account }).then(function(r){
+      send({ ok: true, token: r.accessToken, expiresOn: r.expiresOn, username: account.username, name: account.name });
+    });
+  }
+  function start(){
+    msal.initialize().then(function(){ return msal.handleRedirectPromise(); }).then(function(res){
+      var acc = (res && res.account) || msal.getAllAccounts()[0];
+      if (acc) { return tokenFor(acc); }
+      return msal.acquireTokenRedirect({ scopes: SCOPES, prompt: "select_account" });
+    }).catch(function(e){
+      // Sessiz alma düşerse etkileşimli akışa geç; o da düşerse hatayı bildir.
+      if (e && e.errorCode && /interaction_required|consent_required|login_required/.test(e.errorCode)) {
+        return msal.acquireTokenRedirect({ scopes: SCOPES });
+      }
+      send({ ok: false, error: (e && (e.errorMessage || e.message)) || String(e) });
+    });
+  }
+  if (window.Office) { Office.onReady(start); } else { start(); }
+})();
+</script>
+</body>
+</html>
