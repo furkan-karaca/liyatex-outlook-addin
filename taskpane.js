@@ -130,6 +130,26 @@
   function isoFromLocal(v) { var d = parseTr(v); if (v && !d) throw new Error("Tarih biçimi: gg.aa.yyyy ss:dd"); return d ? d.toISOString() : null; }
   function isoFromDate(v, hour) { var d = parseTr(v, hour ? +hour.split(":")[0] : 9); if (v && !d) throw new Error("Tarih biçimi: gg.aa.yyyy"); return d ? d.toISOString() : null; }
 
+  /* ---------- takvim seçici: metin alanı Türk biçiminde kalır, 📅 tarayıcının kendi seçicisini açar ---------- */
+  function bindPickers() {
+    document.querySelectorAll(".dp .cal").forEach(function (btn) {
+      var txt = $(btn.dataset.for), nat = $(btn.dataset.for + "_n");
+      var withTime = nat.type === "datetime-local";
+      btn.addEventListener("click", function () {
+        var d = parseTr(txt.value, 9) || new Date();
+        nat.value = d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate()) + (withTime ? "T" + p2(d.getHours()) + ":" + p2(d.getMinutes()) : "");
+        if (typeof nat.showPicker === "function") { try { nat.showPicker(); return; } catch (e) { /* aşağı düş */ } }
+        nat.style.pointerEvents = "auto"; nat.style.opacity = "1"; nat.style.width = "auto"; nat.style.height = "auto"; nat.focus(); nat.click();
+      });
+      nat.addEventListener("change", function () {
+        if (!nat.value) return;
+        var d = new Date(nat.value);
+        txt.value = withTime ? localDT(d) : fmtDate(d);
+        nat.style.pointerEvents = ""; nat.style.opacity = ""; nat.style.width = ""; nat.style.height = "";
+      });
+    });
+  }
+
   /* ---------- arama kutuları (firma / kişi) ---------- */
   function lookup(inputId, listId, search, onPick) {
     var inp = $(inputId), ul = $(listId), timer = null, items = [];
@@ -247,8 +267,8 @@
       fillSelect($("aSeason"), res[2].OptionSet.Options.map(function (o) { return { value: o.Value, label: lbl(o) }; }), true);
       state.userId = res[3].UserId;
       var users = res[4].value.map(function (u) { return { value: u.systemuserid, label: u.fullname }; });
-      fillSelect($("tRemindTo"), users, true); fillSelect($("tRemindTo2"), users, true);
-      if (users.some(function (u) { return u.value === state.userId; })) $("tRemindTo").value = state.userId;
+      fillSelect($("tRemindTo"), users, true); fillSelect($("tRemindTo2"), users, true); fillSelect($("tOwner"), users, false);
+      if (users.some(function (u) { return u.value === state.userId; })) { $("tRemindTo").value = state.userId; $("tOwner").value = state.userId; }
       if (res[1].value.length) $("eFair").value = res[1].value[0].zeno_exhibitionid;
     });
   }
@@ -308,6 +328,7 @@
     if ($("tRemindTo").value) b["zeno_RemindToUser_Task@odata.bind"] = "/systemusers(" + $("tRemindTo").value + ")";
     if ($("tRemindTo2").value) b["zeno_remindtouser2_Task@odata.bind"] = "/systemusers(" + $("tRemindTo2").value + ")";
     b.zeno_remindalso = $("tRemindAlso").checked;
+    if ($("tOwner").value) b["ownerid@odata.bind"] = "/systemusers(" + $("tOwner").value + ")";
     var r = regardingBind("task"); if (r) b[r.key] = r.val;
     return { etn: "task", set: "tasks", body: b, label: "Görev" };
   }
@@ -407,6 +428,7 @@
     lookup("accQ", "accList", searchAccounts, setAccount);
     lookup("conQ", "conList", searchContacts, addContact);
     $("btnSave").addEventListener("click", onSave);
+    bindPickers();
     $("btnLogin").addEventListener("click", function () {
       $("loginMsg").className = "msg";
       dialogToken().then(start).catch(function (e) { $("loginMsg").className = "msg err"; $("loginMsg").textContent = e.message; });
