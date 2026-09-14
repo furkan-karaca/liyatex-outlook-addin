@@ -284,7 +284,10 @@
       messageId: it.internetMessageId || "", itemId: it.itemId || "", text: "", html: "",
       // yalnız gerçek dosya ekleri (gövdeye gömülü görseller ve eklenmiş öğeler hariç)
       attachments: (it.attachments || []).filter(function (a) { return !a.isInline && a.attachmentType === "file"; })
-        .map(function (a) { return { id: a.id, name: a.name, size: a.size, type: a.contentType || "" }; })
+        .map(function (a) { return { id: a.id, name: a.name, size: a.size, type: a.contentType || "" }; }),
+      // gövdeye gömülü görseller (imza, ekran görüntüsü): cid: referansı CRM'de çözülmez, base64 olarak gövdeye gömülür
+      inline: (it.attachments || []).filter(function (a) { return a.isInline && /^image\//.test(a.contentType || ""); })
+        .map(function (a) { return { id: a.id, name: a.name, size: a.size, type: a.contentType }; })
     };
     if (m.attachments.length) {
       $("fSaveAtt").hidden = false;
@@ -376,7 +379,8 @@
     else parties.push({ addressused: m.fromEmail, participationtypemask: 1 });
     m.to.forEach(function (r) { parties.push({ addressused: r.email, participationtypemask: 2 }); });
     m.cc.forEach(function (r) { parties.push({ addressused: r.email, participationtypemask: 3 }); });
-    var html = m.html || ""; if (html.length > 200000) html = html.slice(0, 200000) + "<p>[… kısaltıldı]</p>";
+    return embedInlineImages(m).then(function (html) {
+    if (html.length > 2000000) html = html.slice(0, 2000000) + "<p>[… kısaltıldı]</p>";
     var b = {
       subject: m.subject || "(konu yok)", description: html, directioncode: false, messageid: m.messageId || null,
       sender: m.fromEmail, torecipients: m.to.map(function (r) { return r.email; }).join(";"),
@@ -389,6 +393,29 @@
         // Gelen posta olarak kapat (statecode 1 / statuscode 4 = Alındı). Onay eklentisi yalnız zeno_approvalstatus=1 olanı durdurur.
         return api("PATCH", "emails(" + res.id + ")", { statecode: 1, statuscode: 4 }).then(function () { return res.id; }, function () { return res.id; });
       });
+    });
+  }
+
+  var INLINE_LIMIT = 3 * 1024 * 1024;
+  /* <img src="cid:…"> (ya da http/data olmayan her src) sırayla gömülü görsellerle eşlenir —
+     Office.js okuma modunda content-id vermediği için eşleme SIRAYA dayanır; artan görseller sona eklenir. */
+  function embedInlineImages(m) {
+    var html = m.html || "", list = m.inline || [];
+    if (!list.length) return Promise.resolve(html);
+    return Promise.all(list.map(function (a) {
+      if (a.size > INLINE_LIMIT) return Promise.resolve(null);
+      return attachmentContent(a.id).then(function (b64) { return "data:" + a.type + ";base64," + b64; }, function () { return null; });
+    })).then(function (uris) {
+      var i = 0, used = [];
+      html = html.replace(/(<img\b[^>]*?\bsrc=)(["'])(?!https?:|data:)[^"']*\2/gi, function (all, pre, qt) {
+        while (i < uris.length && !uris[i]) i++;
+        if (i >= uris.length) return all;
+        used.push(i); return pre + qt + uris[i++] + qt;
+      });
+      var rest = uris.filter(function (u, k) { return u && used.indexOf(k) < 0; });
+      if (rest.length) html += "<p>Gömülü görseller:</p>" + rest.map(function (u) { return '<p><img src="' + u + '" style="max-width:100%"></p>'; }).join("");
+      return html;
+    });
   }
 
   var ATT_LIMIT = 40 * 1024 * 1024; // Dataverse maxuploadfilesize ~44 MB (canlı ölçüm 14.09)
