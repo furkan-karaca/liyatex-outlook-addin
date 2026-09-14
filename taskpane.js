@@ -281,8 +281,15 @@
       to: (it.to || []).map(function (r) { return { name: r.displayName, email: r.emailAddress }; }),
       cc: (it.cc || []).map(function (r) { return { name: r.displayName, email: r.emailAddress }; }),
       date: it.dateTimeCreated ? new Date(it.dateTimeCreated) : new Date(),
-      messageId: it.internetMessageId || "", itemId: it.itemId || "", text: "", html: ""
+      messageId: it.internetMessageId || "", itemId: it.itemId || "", text: "", html: "",
+      // yalnız gerçek dosya ekleri (gövdeye gömülü görseller ve eklenmiş öğeler hariç)
+      attachments: (it.attachments || []).filter(function (a) { return !a.isInline && a.attachmentType === "file"; })
+        .map(function (a) { return { id: a.id, name: a.name, size: a.size, type: a.contentType || "" }; })
     };
+    if (m.attachments.length) {
+      $("fSaveAtt").hidden = false;
+      $("saveAttLbl").textContent = "Ekleri de kaydet (" + m.attachments.length + "): " + m.attachments.map(function (a) { return a.name; }).join(", ");
+    }
     state.mail = m;
     $("mSubject").textContent = m.subject || "(konu yok)";
     $("mFrom").textContent = m.fromName ? m.fromName + " <" + m.fromEmail + ">" : m.fromEmail;
@@ -376,10 +383,46 @@
       actualstart: m.date.toISOString(), actualend: m.date.toISOString(), email_activity_parties: parties
     };
     var r = regardingBind("email"); if (r) b[r.key] = r.val;
-    return api("POST", "emails", b).then(function (res) {
-      // Gelen posta olarak kapat (statecode 1 / statuscode 4 = Alındı). Onay eklentisi yalnız zeno_approvalstatus=1 olanı durdurur.
-      return api("PATCH", "emails(" + res.id + ")", { statecode: 1, statuscode: 4 }).then(function () { return res.id; }, function () { return res.id; });
+    return api("POST", "emails", b)
+      .then(function (res) { return saveAttachments(res.id).then(function () { return res; }); })
+      .then(function (res) {
+        // Gelen posta olarak kapat (statecode 1 / statuscode 4 = Alındı). Onay eklentisi yalnız zeno_approvalstatus=1 olanı durdurur.
+        return api("PATCH", "emails(" + res.id + ")", { statecode: 1, statuscode: 4 }).then(function () { return res.id; }, function () { return res.id; });
+      });
+  }
+
+  var ATT_LIMIT = 40 * 1024 * 1024; // Dataverse maxuploadfilesize ~44 MB (canlı ölçüm 14.09)
+  function attachmentContent(id) {
+    return new Promise(function (resolve, reject) {
+      Office.context.mailbox.item.getAttachmentContentAsync(id, function (r) {
+        if (r.status !== Office.AsyncResultStatus.Succeeded) { reject(new Error(r.error && r.error.message || "ek okunamadı")); return; }
+        if (r.value.format !== Office.MailboxEnums.AttachmentContentFormat.Base64) { reject(new Error("desteklenmeyen ek biçimi: " + r.value.format)); return; }
+        resolve(r.value.content);
+      });
     });
+  }
+  // Ekler sırayla yazılır; biri düşerse diğerleri devam eder, sonuç mesajda özetlenir.
+  function saveAttachments(emailId) {
+    var list = state.mail.attachments || [];
+    if (!$("saveAtt").checked || !list.length) return Promise.resolve();
+    state.attResult = { ok: 0, fail: [] };
+    return list.reduce(function (chain, a) {
+      return chain.then(function () {
+        if (a.size > ATT_LIMIT) { state.attResult.fail.push(a.name + " (çok büyük)"); return; }
+        return attachmentContent(a.id).then(function (b64) {
+          return api("POST", "activitymimeattachments", {
+            "objectid_email@odata.bind": "/emails(" + emailId + ")", objecttypecode: "email",
+            filename: a.name, subject: a.name, mimetype: a.type || "application/octet-stream", body: b64
+          });
+        }).then(function () { state.attResult.ok++; }, function (e) { state.attResult.fail.push(a.name + " (" + e.message + ")"); });
+      });
+    }, Promise.resolve());
+  }
+  function attSummary() {
+    var r = state.attResult; if (!r) return "";
+    var s = r.ok ? " " + r.ok + " ek kaydedildi." : "";
+    if (r.fail.length) s += " Kaydedilemeyen ek: " + r.fail.join("; ") + ".";
+    return s;
   }
 
   function onSave() {
@@ -388,7 +431,7 @@
       if (!state.account && !state.contacts.length) { showMsg("err", "Bağlanacak firma ya da kişi seçin."); btn.disabled = false; return; }
       if (state.mail.existingEmailId) { showMsg("ok", "Bu e-posta zaten CRM'de kayıtlı.", { href: recordUrl("email", state.mail.existingEmailId), text: "CRM'de aç" }); btn.disabled = false; return; }
       saveEmailActivity(true)
-        .then(function (id) { showMsg("ok", "E-posta CRM'e kaydedildi ve bağlandı.", { href: recordUrl("email", id), text: "CRM'de aç" }); state.mail.existingEmailId = id; })
+        .then(function (id) { showMsg("ok", "E-posta CRM'e kaydedildi ve bağlandı." + attSummary(), { href: recordUrl("email", id), text: "CRM'de aç" }); state.mail.existingEmailId = id; })
         .catch(function (e) { showMsg("err", "E-posta kaydedilemedi: " + e.message); })
         .then(function () { btn.disabled = false; });
       return;
@@ -402,7 +445,7 @@
     api("POST", spec.set, spec.body)
       .then(function (r) { created = r.id; return saveEmailActivity(); })
       .then(function (emailId) {
-        var extra = emailId ? " E-posta da kaydedildi." : "";
+        var extra = emailId ? " E-posta da kaydedildi." + attSummary() : "";
         showMsg("ok", spec.label + " oluşturuldu." + extra, { href: recordUrl(spec.etn, created), text: "CRM'de aç" });
       })
       .catch(function (e) {
@@ -419,6 +462,7 @@
     $("pTask").hidden = name !== "task"; $("pAppt").hidden = name !== "appt"; $("pExpo").hidden = name !== "expo"; $("pMail").hidden = name !== "mail";
     var mailOnly = name === "mail";
     $("fSubject").hidden = mailOnly; $("fDesc").hidden = mailOnly; $("fSaveMail").hidden = mailOnly;
+    $("fSaveAtt").hidden = !(state.mail && state.mail.attachments.length) || (!mailOnly && !$("saveMail").checked);
     $("btnSave").textContent = mailOnly ? "E-postayı CRM'e bağla" : "CRM'de oluştur";
   }
 
@@ -428,6 +472,7 @@
     lookup("accQ", "accList", searchAccounts, setAccount);
     lookup("conQ", "conList", searchContacts, addContact);
     $("btnSave").addEventListener("click", onSave);
+    $("saveMail").addEventListener("change", function () { selectTab(state.tab); });
     bindPickers();
     $("btnLogin").addEventListener("click", function () {
       $("loginMsg").className = "msg";
