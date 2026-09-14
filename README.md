@@ -72,3 +72,8 @@ Firma yoksa ilk seçilen kişi "İlgili" olur; ikisi de yoksa kayıt bağsız a�
 - office.js Microsoft CDN'inden yüklenir; Microsoft SRI/yerel kopyayı desteklemez.
 - Sunucu tarafı eşitleme yok: CRM'de açılan toplantı Outlook takvimine **düşmez** (ve tersi). İstenirse çapraz kiracı server-side sync ayrıca kurulur.
 - Yeni Outlook (Windows) ve Outlook Web'de çalışır; klasik Outlook 2016+ da manifest'i kabul eder. Mobilde okuma penceresi düğmesi tanımlı.
+
+
+## Görev → Kaynak E-posta (14.09.2026)
+
+Görevde `zeno_emailid` (Kaynak E-posta) lookup'ı var (tools/gorev_kaynak_eposta.py; "Task for Interactive experience" formunda telefon kaynağının altında). Eklenti görevi ve e-postayı yazdıktan sonra görevi bu alanla bağlar (bind adı `zeno_EmailId_Task`); e-posta zaten CRM'deyse mevcut kayıt bağlanır. Yayın: `outlook-addin/` içeriği `furkan-karaca/liyatex-outlook-addin` deposuna (GitHub Pages) kopyalanıp push edilir.

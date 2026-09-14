@@ -471,6 +471,7 @@
     var created = null;
     api("POST", spec.set, spec.body)
       .then(function (r) { created = r.id; return saveEmailActivity(); })
+      .then(function (emailId) { return linkTaskToEmail(spec, created, emailId).then(function () { return emailId; }); })
       .then(function (emailId) {
         var extra = emailId ? " E-posta da kaydedildi." + attSummary() : "";
         showMsg("ok", spec.label + " oluşturuldu." + extra, { href: recordUrl(spec.etn, created), text: "CRM'de aç" });
@@ -480,6 +481,18 @@
         else showMsg("err", "Kayıt oluşturulamadı: " + e.message);
       })
       .then(function () { btn.disabled = false; });
+  }
+
+  /* GÖREV → KAYNAK E-POSTA (14.09.2026, Furkan: "task üzerinde email lookup'ını da
+     koyabilir miyiz?"). Görevde toplantı/telefon kaynak lookup'ları gibi zeno_emailid
+     (Kaynak E-posta) var; bind adı metadata'dan: zeno_EmailId_Task. E-posta bu turda
+     kaydedildiyse o, zaten CRM'de varsa mevcut kayıt bağlanır. Bağ kurulamazsa görev
+     yine de kalır — hata mesajda söylenir, kayıt geri alınmaz. */
+  function linkTaskToEmail(spec, taskId, emailId) {
+    var eid = emailId || (state.mail && state.mail.existingEmailId);
+    if (spec.etn !== "task" || !taskId || !eid) return Promise.resolve();
+    return api("PATCH", "tasks(" + taskId + ")", { "zeno_EmailId_Task@odata.bind": "/emails(" + eid + ")" })
+      .catch(function (e) { showMsg("err", "Görev oluşturuldu ama e-postaya bağlanamadı: " + e.message); });
   }
 
   /* ---------- sekmeler ---------- */
