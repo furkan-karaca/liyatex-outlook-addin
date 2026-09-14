@@ -30,17 +30,28 @@
     }).then(function (r) { setToken(r.accessToken, r.expiresOn, r.account); });
   }
 
+  var TOK_KEY = "liy_tok";
   function setToken(tok, exp, acc) {
     state.token = tok;
     state.expiresOn = exp ? new Date(exp).getTime() : Date.now() + 50 * 60000;
     state.user = acc ? { username: acc.username, name: acc.name } : state.user;
     $("user").textContent = state.user ? (state.user.name || state.user.username) : "";
     $("user").title = state.user ? state.user.username : "";
+    // Outlook masaüstünde iletişim kutusunun depolaması panelden ayrı; jetonu panel tarafında saklayıp süresi dolana dek yeniden sormuyoruz.
+    try { localStorage.setItem(TOK_KEY, JSON.stringify({ token: tok, expiresOn: state.expiresOn, user: state.user })); } catch (e) { /* depolama kapalı */ }
+  }
+  function cachedToken() {
+    try {
+      var c = JSON.parse(localStorage.getItem(TOK_KEY) || "null");
+      if (c && c.token && Date.now() < c.expiresOn - 60000) { state.token = c.token; state.expiresOn = c.expiresOn; state.user = c.user; setToken(c.token, c.expiresOn, c.user); return true; }
+    } catch (e) { /* yok say */ }
+    return false;
   }
 
   function dialogToken() {
     return new Promise(function (resolve, reject) {
-      Office.context.ui.displayDialogAsync(C.HOST_URL + "/auth.html", { height: 60, width: 30, promptBeforeOpen: false }, function (res) {
+      var hint = ""; try { var c = JSON.parse(localStorage.getItem(TOK_KEY) || "null"); hint = c && c.user ? c.user.username : ""; } catch (e) { /* yok */ }
+      Office.context.ui.displayDialogAsync(C.HOST_URL + "/auth.html" + (hint ? "?hint=" + encodeURIComponent(hint) : ""), { height: 60, width: 30, promptBeforeOpen: false }, function (res) {
         if (res.status !== Office.AsyncResultStatus.Succeeded) { reject(new Error("Giriş penceresi açılamadı: " + res.error.message)); return; }
         var dlg = res.value;
         dlg.addEventHandler(Office.EventType.DialogMessageReceived, function (arg) {
@@ -57,7 +68,7 @@
   }
 
   function ensureToken() {
-    if (haveToken()) return Promise.resolve();
+    if (haveToken() || cachedToken()) return Promise.resolve();
     return silentToken().catch(function () { return dialogToken(); });
   }
 
@@ -227,13 +238,17 @@
       api("GET", "EntityDefinitions(LogicalName='task')/Attributes(LogicalName='zeno_gorevturu')/Microsoft.Dynamics.CRM.PicklistAttributeMetadata?$select=LogicalName&$expand=OptionSet($select=Options)"),
       api("GET", "zeno_exhibitions?$select=zeno_name,zeno_exhibitionid&$filter=statecode eq 0&$orderby=createdon desc&$top=12"),
       api("GET", "EntityDefinitions(LogicalName='appointment')/Attributes(LogicalName='zeno_sezon')/Microsoft.Dynamics.CRM.PicklistAttributeMetadata?$select=LogicalName&$expand=OptionSet($select=Options)"),
-      api("GET", "WhoAmI")
+      api("GET", "WhoAmI"),
+      api("GET", "systemusers?$select=fullname,systemuserid&$filter=isdisabled eq false and islicensed eq true and accessmode eq 0 and applicationid eq null&$orderby=fullname")
     ]).then(function (res) {
       var lbl = function (o) { return (o.Label.UserLocalizedLabel || {}).Label || String(o.Value); };
       fillSelect($("tType"), res[0].OptionSet.Options.map(function (o) { return { value: o.Value, label: lbl(o) }; }), true);
       fillSelect($("eFair"), res[1].value.map(function (f) { return { value: f.zeno_exhibitionid, label: f.zeno_name }; }), true);
       fillSelect($("aSeason"), res[2].OptionSet.Options.map(function (o) { return { value: o.Value, label: lbl(o) }; }), true);
       state.userId = res[3].UserId;
+      var users = res[4].value.map(function (u) { return { value: u.systemuserid, label: u.fullname }; });
+      fillSelect($("tRemindTo"), users, true); fillSelect($("tRemindTo2"), users, true);
+      if (users.some(function (u) { return u.value === state.userId; })) $("tRemindTo").value = state.userId;
       if (res[1].value.length) $("eFair").value = res[1].value[0].zeno_exhibitionid;
     });
   }
@@ -285,6 +300,14 @@
     var b = { subject: $("subject").value.trim(), description: $("desc").value, prioritycode: Number($("tPrio").value), zeno_kaynakturu: 100000003 };
     if ($("tType").value) b.zeno_gorevturu = Number($("tType").value);
     var due = isoFromDate($("tDue").value, "18:00"); if (due) b.scheduledend = due;
+    var ro = isoFromLocal($("tRemindOn").value);
+    if (ro) {
+      b.zeno_remindon = ro;
+      if (!$("tRemindTo").value) throw new Error("Hatırlatma için kime hatırlatılacağını seçin.");
+    }
+    if ($("tRemindTo").value) b["zeno_RemindToUser_Task@odata.bind"] = "/systemusers(" + $("tRemindTo").value + ")";
+    if ($("tRemindTo2").value) b["zeno_remindtouser2_Task@odata.bind"] = "/systemusers(" + $("tRemindTo2").value + ")";
+    b.zeno_remindalso = $("tRemindAlso").checked;
     var r = regardingBind("task"); if (r) b[r.key] = r.val;
     return { etn: "task", set: "tasks", body: b, label: "Görev" };
   }
@@ -316,9 +339,9 @@
     return { etn: "zeno_exhibitionnote", set: "zeno_exhibitionnotes", body: b, label: "Fuar notu" };
   }
 
-  function saveEmailActivity() {
+  function saveEmailActivity(force) {
     var m = state.mail;
-    if (!$("saveMail").checked || m.existingEmailId) return Promise.resolve(null);
+    if ((!force && !$("saveMail").checked) || m.existingEmailId) return Promise.resolve(null);
     var parties = [];
     var sender = state.contacts.filter(function (c) { return (c.email || "").toLowerCase() === m.fromEmail.toLowerCase(); })[0];
     if (sender) parties.push({ "partyid_contact@odata.bind": "/contacts(" + sender.id + ")", participationtypemask: 1 });
@@ -340,6 +363,15 @@
 
   function onSave() {
     var btn = $("btnSave"); btn.disabled = true; showMsg("", "");
+    if (state.tab === "mail") {
+      if (!state.account && !state.contacts.length) { showMsg("err", "Bağlanacak firma ya da kişi seçin."); btn.disabled = false; return; }
+      if (state.mail.existingEmailId) { showMsg("ok", "Bu e-posta zaten CRM'de kayıtlı.", { href: recordUrl("email", state.mail.existingEmailId), text: "CRM'de aç" }); btn.disabled = false; return; }
+      saveEmailActivity(true)
+        .then(function (id) { showMsg("ok", "E-posta CRM'e kaydedildi ve bağlandı.", { href: recordUrl("email", id), text: "CRM'de aç" }); state.mail.existingEmailId = id; })
+        .catch(function (e) { showMsg("err", "E-posta kaydedilemedi: " + e.message); })
+        .then(function () { btn.disabled = false; });
+      return;
+    }
     var spec;
     try {
       if (!$("subject").value.trim()) throw new Error("Konu boş olamaz.");
@@ -363,7 +395,10 @@
   function selectTab(name) {
     state.tab = name;
     document.querySelectorAll(".tabs [role=tab]").forEach(function (b) { b.setAttribute("aria-selected", String(b.dataset.tab === name)); });
-    $("pTask").hidden = name !== "task"; $("pAppt").hidden = name !== "appt"; $("pExpo").hidden = name !== "expo";
+    $("pTask").hidden = name !== "task"; $("pAppt").hidden = name !== "appt"; $("pExpo").hidden = name !== "expo"; $("pMail").hidden = name !== "mail";
+    var mailOnly = name === "mail";
+    $("fSubject").hidden = mailOnly; $("fDesc").hidden = mailOnly; $("fSaveMail").hidden = mailOnly;
+    $("btnSave").textContent = mailOnly ? "E-postayı CRM'e bağla" : "CRM'de oluştur";
   }
 
   /* ---------- başlat ---------- */
@@ -378,10 +413,12 @@
     });
     // varsayılan tarihler
     var d = new Date(); d.setDate(d.getDate() + 3); $("tDue").value = fmtDate(d);
+    var rd = new Date(d); rd.setHours(8, 30, 0, 0); $("tRemindOn").value = localDT(rd);
     var s = new Date(); s.setDate(s.getDate() + 1); s.setHours(10, 0, 0, 0); $("aStart").value = localDT(s);
     var e = new Date(s.getTime() + 60 * 60000); $("aEnd").value = localDT(e);
     $("eDate").value = fmtDate(new Date());
 
+    if (cachedToken()) { start(); return; }
     silentToken().then(start, function () { $("login").style.display = "block"; });
   }
 

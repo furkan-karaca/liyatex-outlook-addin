@@ -33,7 +33,8 @@
     msal.initialize().then(function(){ return msal.handleRedirectPromise(); }).then(function(res){
       var acc = (res && res.account) || msal.getAllAccounts()[0];
       if (acc) { return tokenFor(acc); }
-      return msal.acquireTokenRedirect({ scopes: SCOPES, prompt: "select_account" });
+      var hint = new URLSearchParams(location.search).get("hint") || "";
+      return msal.acquireTokenRedirect(hint ? { scopes: SCOPES, loginHint: hint } : { scopes: SCOPES, prompt: "select_account" });
     }).catch(function(e){
       // Sessiz alma düşerse etkileşimli akışa geç; o da düşerse hatayı bildir.
       if (e && e.errorCode && /interaction_required|consent_required|login_required/.test(e.errorCode)) {

@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Liyatex CRM</title>
-<!-- office.js Microsoft tarafından sürümlenir; SRI pinlemesi resmi olarak desteklenmez. -->
+<!-- Toplantı/Fuar Notu sekmeleri şimdilik gizli (hidden); açmak için düğmelerden hidden kaldır.
+     office.js Microsoft tarafından sürümlenir; SRI pinlemesi resmi olarak desteklenmez. -->
 <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
 <script src="lib/msal-browser.min.js"></script>
 <script src="config.js"></script>
@@ -21,7 +22,7 @@
   .mail-subj{font-weight:600;word-break:break-word}
   .mail-meta{color:var(--mut);font-size:12px;word-break:break-word}
   .tabs{display:flex;gap:4px;margin:8px 0 12px}
-  .tabs button{flex:1;padding:8px 4px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;font:inherit;font-weight:600;color:var(--mut)}
+  .tabs{flex-wrap:wrap}.tabs button{flex:1 1 40%;padding:8px 4px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;font:inherit;font-weight:600;color:var(--mut)}
   .tabs button[aria-selected="true"]{background:var(--brand);border-color:var(--brand);color:#fff}
   label{display:block;margin:8px 0 3px;font-size:12px;color:var(--mut)}
   input,select,textarea{width:100%;padding:7px 8px;border:1px solid #cbd5e1;border-radius:6px;font:inherit;background:#fff}
@@ -82,12 +83,14 @@
 
   <div class="tabs" role="tablist">
     <button type="button" role="tab" data-tab="task" aria-selected="true">Görev</button>
-    <button type="button" role="tab" data-tab="appt" aria-selected="false">Toplantı</button>
-    <button type="button" role="tab" data-tab="expo" aria-selected="false">Fuar Notu</button>
+    <button type="button" role="tab" data-tab="appt" aria-selected="false" hidden>Toplantı</button>
+    <button type="button" role="tab" data-tab="expo" aria-selected="false" hidden>Fuar Notu</button>
+    <button type="button" role="tab" data-tab="mail" aria-selected="false">Yalnız E-posta</button>
   </div>
+  <div class="hint" id="pMail" hidden>Kayıt açılmaz; yalnız bu e-posta CRM'e kaydedilip seçili firmaya/kişiye bağlanır.</div>
 
-  <label for="subject">Konu</label>
-  <input id="subject">
+  <div id="fSubject"><label for="subject">Konu</label>
+  <input id="subject"></div>
 
   <div id="pTask" role="tabpanel">
     <div class="row">
@@ -98,6 +101,16 @@
     </div>
     <label for="tDue">Termin</label>
     <input id="tDue" inputmode="numeric" placeholder="gg.aa.yyyy">
+    <div class="row">
+      <div><label for="tRemindOn">Hatırlatma zamanı</label><input id="tRemindOn" placeholder="gg.aa.yyyy ss:dd"></div>
+      <div><label for="tRemindTo">Kime hatırlatılsın</label>
+        <select id="tRemindTo"><option value="">— boş —</option></select></div>
+    </div>
+    <div class="row">
+      <div><label for="tRemindTo2">Kime hatırlatılsın (2)</label>
+        <select id="tRemindTo2"><option value="">— boş —</option></select></div>
+      <div class="chk" style="margin-top:26px"><input type="checkbox" id="tRemindAlso"><label for="tRemindAlso" style="margin:0;color:var(--ink)">Emel Hanım'a da</label></div>
+    </div>
   </div>
 
   <div id="pAppt" role="tabpanel" hidden>
@@ -121,11 +134,13 @@
     </div>
   </div>
 
+  <div id="fDesc">
   <label for="desc">Açıklama / Not</label>
   <textarea id="desc"></textarea>
   <div class="hint">E-postanın metni açıklamaya eklendi; gerekirse kısaltın.</div>
+  </div>
 
-  <div class="chk"><input type="checkbox" id="saveMail" checked><label for="saveMail" style="margin:0;color:var(--ink)">E-postayı da CRM'e kaydet ve firmaya bağla</label></div>
+  <div class="chk" id="fSaveMail"><input type="checkbox" id="saveMail" checked><label for="saveMail" style="margin:0;color:var(--ink)">E-postayı da CRM'e kaydet ve firmaya bağla</label></div>
 
   <div class="actions">
     <button class="btn" id="btnSave" type="button">CRM'de oluştur</button>
