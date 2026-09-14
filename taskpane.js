@@ -105,12 +105,19 @@
     while (sel.options.length > (keepFirst ? 1 : 0)) sel.remove(sel.options.length - 1);
     items.forEach(function (it) { var o = document.createElement("option"); o.value = it.value; o.textContent = it.label; sel.appendChild(o); });
   }
-  function localDT(d) { // datetime-local için yerel biçim
-    var p = function (n) { return (n < 10 ? "0" : "") + n; };
-    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
+  // Tarihler Türk biçiminde metin: "gg.aa.yyyy" ve "gg.aa.yyyy ss:dd" (ayraç . / - olabilir).
+  var p2 = function (n) { return (n < 10 ? "0" : "") + n; };
+  function fmtDate(d) { return p2(d.getDate()) + "." + p2(d.getMonth() + 1) + "." + d.getFullYear(); }
+  function localDT(d) { return fmtDate(d) + " " + p2(d.getHours()) + ":" + p2(d.getMinutes()); }
+  function parseTr(v, defHour) {
+    var m = /^\s*(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?:\s+(\d{1,2})[:.](\d{2}))?\s*$/.exec(v || "");
+    if (!m) return null;
+    var hh = m[4] != null ? +m[4] : (defHour || 0), mm = m[5] != null ? +m[5] : 0;
+    var d = new Date(+m[3], +m[2] - 1, +m[1], hh, mm, 0, 0);
+    return isNaN(d.getTime()) || d.getDate() !== +m[1] ? null : d;
   }
-  function isoFromLocal(v) { return v ? new Date(v).toISOString() : null; }
-  function isoFromDate(v, hour) { if (!v) return null; var d = new Date(v + "T" + (hour || "09:00") + ":00"); return d.toISOString(); }
+  function isoFromLocal(v) { var d = parseTr(v); if (v && !d) throw new Error("Tarih biçimi: gg.aa.yyyy ss:dd"); return d ? d.toISOString() : null; }
+  function isoFromDate(v, hour) { var d = parseTr(v, hour ? +hour.split(":")[0] : 9); if (v && !d) throw new Error("Tarih biçimi: gg.aa.yyyy"); return d ? d.toISOString() : null; }
 
   /* ---------- arama kutuları (firma / kişi) ---------- */
   function lookup(inputId, listId, search, onPick) {
@@ -370,10 +377,10 @@
       dialogToken().then(start).catch(function (e) { $("loginMsg").className = "msg err"; $("loginMsg").textContent = e.message; });
     });
     // varsayılan tarihler
-    var d = new Date(); d.setDate(d.getDate() + 3); $("tDue").value = d.toISOString().slice(0, 10);
+    var d = new Date(); d.setDate(d.getDate() + 3); $("tDue").value = fmtDate(d);
     var s = new Date(); s.setDate(s.getDate() + 1); s.setHours(10, 0, 0, 0); $("aStart").value = localDT(s);
     var e = new Date(s.getTime() + 60 * 60000); $("aEnd").value = localDT(e);
-    $("eDate").value = new Date().toISOString().slice(0, 10);
+    $("eDate").value = fmtDate(new Date());
 
     silentToken().then(start, function () { $("login").style.display = "block"; });
   }

@@ -97,13 +97,13 @@
         <select id="tPrio"><option value="0">Düşük</option><option value="1" selected>Normal</option><option value="2">Yüksek</option></select></div>
     </div>
     <label for="tDue">Termin</label>
-    <input id="tDue" type="date">
+    <input id="tDue" inputmode="numeric" placeholder="gg.aa.yyyy">
   </div>
 
   <div id="pAppt" role="tabpanel" hidden>
     <div class="row">
-      <div><label for="aStart">Başlangıç</label><input id="aStart" type="datetime-local"></div>
-      <div><label for="aEnd">Bitiş</label><input id="aEnd" type="datetime-local"></div>
+      <div><label for="aStart">Başlangıç</label><input id="aStart" placeholder="gg.aa.yyyy ss:dd"></div>
+      <div><label for="aEnd">Bitiş</label><input id="aEnd" placeholder="gg.aa.yyyy ss:dd"></div>
     </div>
     <label for="aLoc">Yer</label>
     <input id="aLoc">
@@ -117,7 +117,7 @@
     <div class="row">
       <div><label for="eKind">Amaç</label>
         <select id="eKind"><option value="599960000">Ziyaret</option><option value="599960001">Talep</option></select></div>
-      <div><label for="eDate">Ziyaret tarihi</label><input id="eDate" type="date"></div>
+      <div><label for="eDate">Ziyaret tarihi</label><input id="eDate" inputmode="numeric" placeholder="gg.aa.yyyy"></div>
     </div>
   </div>
 
