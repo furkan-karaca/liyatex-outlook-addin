@@ -4,6 +4,12 @@
 (function () {
   "use strict";
   var C = window.LIY_CFG;
+  /* Tanı satırı: eski Outlook (Mac) gibi istemcilerde ne olduğunu görmek için — hata ve olay günlüğü panelde. */
+  function diag(msg) {
+    try { var el = document.getElementById("diag"); if (el) el.textContent += new Date().toLocaleTimeString("tr-TR") + " " + msg + "\n"; } catch (e) { /* yok */ }
+  }
+  window.addEventListener("error", function (ev) { diag("HATA: " + (ev.message || ev.error)); });
+  window.addEventListener("unhandledrejection", function (ev) { diag("HATA(p): " + (ev.reason && (ev.reason.message || ev.reason.errorMessage) || ev.reason)); });
   var API = C.CRM_URL + "/api/data/v9.2/";
   var SCOPES = [C.CRM_URL + "/user_impersonation"];
   var $ = function (id) { return document.getElementById(id); };
@@ -51,7 +57,9 @@
   function dialogToken() {
     return new Promise(function (resolve, reject) {
       var hint = ""; try { var c = JSON.parse(localStorage.getItem(TOK_KEY) || "null"); hint = c && c.user ? c.user.username : ""; } catch (e) { /* yok */ }
+      diag("dialog açılıyor");
       Office.context.ui.displayDialogAsync(C.HOST_URL + "/auth.html" + (hint ? "?hint=" + encodeURIComponent(hint) : ""), { height: 60, width: 30, promptBeforeOpen: false }, function (res) {
+        diag("dialog sonucu: " + res.status + (res.error ? " " + res.error.code + " " + res.error.message : ""));
         if (res.status !== Office.AsyncResultStatus.Succeeded) { reject(new Error("Giriş penceresi açılamadı (" + res.error.code + "): " + res.error.message + " — alttaki 'panelin içinde giriş yap' bağlantısını kullanın.")); return; }
         var dlg = res.value;
         dlg.addEventHandler(Office.EventType.DialogMessageReceived, function (arg) {
@@ -515,13 +523,14 @@
     $("saveMail").addEventListener("change", function () { selectTab(state.tab); });
     bindPickers();
     $("btnLogin").addEventListener("click", function () {
+      diag("giriş düğmesi tıklandı");
       $("loginMsg").className = "msg ok"; $("loginMsg").textContent = "Giriş penceresi açılıyor…";
       dialogToken().then(start).catch(function (e) { $("loginMsg").className = "msg err"; $("loginMsg").textContent = e.message; });
     });
     // Yedek: Office dialog açılmayan istemcilerde (eski Outlook Mac) giriş panelin kendi penceresinde yapılır.
     $("btnLoginInline").addEventListener("click", function (ev) {
-      ev.preventDefault();
-      try { localStorage.setItem("liy_back", "1"); } catch (e) { /* yok */ }
+      ev.preventDefault(); diag("panel içi giriş tıklandı");
+      try { localStorage.setItem("liy_back", "1"); } catch (e) { diag("localStorage yok: " + e.message); }
       var hint = state.user ? state.user.username : "";
       msal.initialize().then(function () {
         return msal.acquireTokenRedirect(hint ? { scopes: SCOPES, loginHint: hint } : { scopes: SCOPES, prompt: "select_account" });
@@ -546,6 +555,10 @@
 
   Office.onReady(function (info) {
     if (info.host !== Office.HostType.Outlook) { document.body.textContent = "Bu eklenti yalnız Outlook'ta çalışır."; return; }
+    try {
+      var d = Office.context.diagnostics || {};
+      diag("Office hazır: " + info.host + "/" + info.platform + " v" + (d.version || "?") + " · Mailbox1.8=" + Office.context.requirements.isSetSupported("Mailbox", "1.8") + " · dialog=" + (Office.context.ui && typeof Office.context.ui.displayDialogAsync) + " · msal=" + (typeof window.msal));
+    } catch (e) { diag("tanı hatası: " + e.message); }
     boot();
   });
 })();
