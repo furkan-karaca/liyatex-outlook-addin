@@ -19,7 +19,19 @@
     auth: { clientId: C.CLIENT_ID, authority: "https://login.microsoftonline.com/" + C.TENANT_ID, redirectUri: C.HOST_URL + "/auth.html", navigateToLoginRequestUrl: false },
     cache: { cacheLocation: "localStorage" }
   });
+  // Panel içi yedek akış: panel loginRedirect ile buraya geldiyse (liy_back bayrağı) jeton
+  // localStorage'a yazılıp panele dönülür — Office dialog'un açılmadığı eski Outlook (Mac) için.
   function send(obj){
+    var back = false; try { back = localStorage.getItem("liy_back") === "1"; } catch (e) { /* yok */ }
+    if (back) {
+      try {
+        localStorage.removeItem("liy_back");
+        if (obj.ok) localStorage.setItem("liy_tok", JSON.stringify({ token: obj.token, expiresOn: new Date(obj.expiresOn).getTime(), user: { username: obj.username, name: obj.name } }));
+        else localStorage.setItem("liy_err", obj.error || "Giriş başarısız");
+      } catch (e) { /* yok */ }
+      location.replace(C.HOST_URL + "/taskpane.html");
+      return;
+    }
     var s = JSON.stringify(obj);
     if (window.Office && Office.context && Office.context.ui) { Office.context.ui.messageParent(s); }
     else { document.getElementById("msg").textContent = obj.ok ? "Oturum açıldı, bu pencereyi kapatabilirsiniz." : ("Hata: " + obj.error); }

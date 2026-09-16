@@ -52,7 +52,7 @@
     return new Promise(function (resolve, reject) {
       var hint = ""; try { var c = JSON.parse(localStorage.getItem(TOK_KEY) || "null"); hint = c && c.user ? c.user.username : ""; } catch (e) { /* yok */ }
       Office.context.ui.displayDialogAsync(C.HOST_URL + "/auth.html" + (hint ? "?hint=" + encodeURIComponent(hint) : ""), { height: 60, width: 30, promptBeforeOpen: false }, function (res) {
-        if (res.status !== Office.AsyncResultStatus.Succeeded) { reject(new Error("Giriş penceresi açılamadı: " + res.error.message)); return; }
+        if (res.status !== Office.AsyncResultStatus.Succeeded) { reject(new Error("Giriş penceresi açılamadı (" + res.error.code + "): " + res.error.message + " — alttaki 'panelin içinde giriş yap' bağlantısını kullanın.")); return; }
         var dlg = res.value;
         dlg.addEventHandler(Office.EventType.DialogMessageReceived, function (arg) {
           var m; try { m = JSON.parse(arg.message); } catch (e) { m = { ok: false, error: "geçersiz yanıt" }; }
@@ -515,9 +515,19 @@
     $("saveMail").addEventListener("change", function () { selectTab(state.tab); });
     bindPickers();
     $("btnLogin").addEventListener("click", function () {
-      $("loginMsg").className = "msg";
+      $("loginMsg").className = "msg ok"; $("loginMsg").textContent = "Giriş penceresi açılıyor…";
       dialogToken().then(start).catch(function (e) { $("loginMsg").className = "msg err"; $("loginMsg").textContent = e.message; });
     });
+    // Yedek: Office dialog açılmayan istemcilerde (eski Outlook Mac) giriş panelin kendi penceresinde yapılır.
+    $("btnLoginInline").addEventListener("click", function (ev) {
+      ev.preventDefault();
+      try { localStorage.setItem("liy_back", "1"); } catch (e) { /* yok */ }
+      var hint = state.user ? state.user.username : "";
+      msal.initialize().then(function () {
+        return msal.acquireTokenRedirect(hint ? { scopes: SCOPES, loginHint: hint } : { scopes: SCOPES, prompt: "select_account" });
+      }).catch(function (e) { $("loginMsg").className = "msg err"; $("loginMsg").textContent = e.message; });
+    });
+    try { var le = localStorage.getItem("liy_err"); if (le) { localStorage.removeItem("liy_err"); $("loginMsg").className = "msg err"; $("loginMsg").textContent = le; } } catch (e) { /* yok */ }
     // varsayılan tarihler
     var d = new Date(); d.setDate(d.getDate() + 3); $("tDue").value = fmtDate(d);
     var rd = new Date(d); rd.setHours(8, 30, 0, 0); $("tRemindOn").value = localDT(rd);
