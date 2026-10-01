@@ -17,7 +17,9 @@
   var state = {
     token: null, expiresOn: 0, user: null, userId: null,
     mail: null, account: null, contacts: [], tab: "task",
-    lists: { taskTypes: [], fairs: [], seasons: [] }
+    lists: { taskTypes: [], fairs: [], seasons: [] },
+    /* kayıt düğmesinin durumu — bkz. "MÜKERRER KAYIT" (onSave üstü) */
+    busy: false, asking: false, done: null, reloadPending: false, loading: false
   };
 
   var msal = new window.msal.PublicClientApplication({
@@ -107,6 +109,11 @@
     });
   }
   function q(v) { return String(v || "").replace(/'/g, "''"); }
+  /* Süzgece giren METİN değeri adrese kodlanarak girer. 30.09.2026 canlı ölçüm: Dataverse
+     ham '+'yı boşluk okuyor (contains(subject,'+') boşluklu konuları döndürdü), ham '&' 400
+     veriyor, '#' adresi kesiyor. Gmail message-id'lerinde '+' ve '=' olağan — kodlanmazsa
+     "bu e-posta zaten kayıtlı" denetimi ıskalıyor ve aynı e-posta ikinci kez yazılıyordu. */
+  function lit(v) { return encodeURIComponent(q(v)); }
 
   /* ---------- UI yardımcıları ---------- */
   function showMsg(kind, text, link) {
@@ -225,11 +232,14 @@
 
   /* ---------- e-postadan otomatik eşleme ---------- */
   function autoMatch() {
-    var m = state.mail; if (!m || !m.fromEmail) return Promise.resolve();
+    var m = state.mail; if (!m || !m.fromEmail) return checkExistingEmail();
+    // Sabitlenmiş panelde e-posta değişirse eski e-postanın eşlemesi yenisinin üstüne yazılmasın.
+    var cur = function () { return state.mail === m; };
     var email = m.fromEmail.toLowerCase(), domain = email.split("@")[1] || "";
     var hint = [];
     return api("GET", "contacts?$select=fullname,contactid,emailaddress1,jobtitle,_parentcustomerid_value&$expand=parentcustomerid_account($select=name,accountid)&$filter=statecode eq 0 and (emailaddress1 eq '" + q(email) + "' or emailaddress2 eq '" + q(email) + "')&$top=3")
       .then(function (r) {
+        if (!cur()) return null;
         if (r.value.length) {
           var c = r.value[0];
           addContact({ id: c.contactid, label: c.fullname, email: c.emailaddress1 });
@@ -241,6 +251,7 @@
         return api("GET", "accounts?$select=name,accountid&$filter=statecode eq 0 and (contains(emailaddress1,'@" + q(domain) + "') or contains(websiteurl,'" + q(domain) + "'))&$top=3");
       })
       .then(function (r) {
+        if (!cur()) return;
         if (r && r.value.length === 1) { setAccount({ id: r.value[0].accountid, label: r.value[0].name }); hint.push("Firma alan adından bulundu: " + r.value[0].name + "."); }
         else if (r && r.value.length > 1) hint.push("Alan adı " + r.value.length + " firmayla eşleşti, elle seçin.");
         if (!state.account && !state.contacts.length) hint.push("Gönderen CRM'de bulunamadı; firmayı elle seçin.");
@@ -250,10 +261,10 @@
   }
 
   function checkExistingEmail() {
-    var mid = state.mail.messageId; if (!mid) return;
-    return api("GET", "emails?$select=activityid,subject&$filter=messageid eq '" + q(mid) + "'&$top=1").then(function (r) {
-      if (r.value.length) {
-        state.mail.existingEmailId = r.value[0].activityid;
+    var m = state.mail, mid = m && m.messageId; if (!mid) return Promise.resolve();
+    return api("GET", "emails?$select=activityid,subject&$filter=messageid eq '" + lit(mid) + "'&$top=1").then(function (r) {
+      if (r.value.length && state.mail === m) {
+        m.existingEmailId = r.value[0].activityid;
         $("mLinked").textContent = "Bu e-posta CRM'de zaten kayıtlı; tekrar kaydedilmez.";
         $("saveMail").checked = false;
       }
@@ -290,6 +301,9 @@
       cc: (it.cc || []).map(function (r) { return { name: r.displayName, email: r.emailAddress }; }),
       date: it.dateTimeCreated ? new Date(it.dateTimeCreated) : new Date(),
       messageId: it.internetMessageId || "", itemId: it.itemId || "", text: "", html: "",
+      // Ek/gömülü görsel içeriği BU öğeden okunur: sabitlenmiş panelde kayıt yoldayken
+      // Office.context.mailbox.item çoktan yeni e-postayı gösteriyor olabilir.
+      item: it,
       // yalnız gerçek dosya ekleri (gövdeye gömülü görseller ve eklenmiş öğeler hariç)
       attachments: (it.attachments || []).filter(function (a) { return !a.isInline && a.attachmentType === "file"; })
         .map(function (a) { return { id: a.id, name: a.name, size: a.size, type: a.contentType || "" }; }),
@@ -306,12 +320,17 @@
     $("mFrom").textContent = m.fromName ? m.fromName + " <" + m.fromEmail + ">" : m.fromEmail;
     $("mDate").textContent = m.date.toLocaleString("tr-TR");
     $("subject").value = m.subject;
+    // Gövde gelene kadar kayıt KAPALI: açık kalsaydı yeni konu + ÖNCEKİ e-postanın
+    // açıklaması ve boş HTML gövdesiyle kayıt açılabiliyordu (sabitlenmiş panel).
+    state.loading = true; syncSaveBtn();
+    function bitti() { if (state.mail === m) { state.loading = false; syncSaveBtn(); } }
     return new Promise(function (resolve) {
       it.body.getAsync(Office.CoercionType.Text, function (r) {
         m.text = r.status === Office.AsyncResultStatus.Succeeded ? (r.value || "") : "";
-        $("desc").value = buildDescription(m);
+        if (state.mail === m) $("desc").value = buildDescription(m);   // geç gelen eski e-posta gövdesi yenisini ezmesin
         it.body.getAsync(Office.CoercionType.Html, function (r2) {
           m.html = r2.status === Office.AsyncResultStatus.Succeeded ? (r2.value || "") : "";
+          bitti();
           resolve();
         });
       });
@@ -412,7 +431,7 @@
     if (!list.length) return Promise.resolve(html);
     return Promise.all(list.map(function (a) {
       if (a.size > INLINE_LIMIT) return Promise.resolve(null);
-      return attachmentContent(a.id).then(function (b64) { return "data:" + a.type + ";base64," + b64; }, function () { return null; });
+      return attachmentContent(a.id, m.item).then(function (b64) { return "data:" + a.type + ";base64," + b64; }, function () { return null; });
     })).then(function (uris) {
       var i = 0, used = [];
       html = html.replace(/(<img\b[^>]*?\bsrc=)(["'])(?!https?:|data:)[^"']*\2/gi, function (all, pre, qt) {
@@ -427,9 +446,9 @@
   }
 
   var ATT_LIMIT = 40 * 1024 * 1024; // Dataverse maxuploadfilesize ~44 MB (canlı ölçüm 14.09)
-  function attachmentContent(id) {
+  function attachmentContent(id, item) {
     return new Promise(function (resolve, reject) {
-      Office.context.mailbox.item.getAttachmentContentAsync(id, function (r) {
+      (item || Office.context.mailbox.item).getAttachmentContentAsync(id, function (r) {
         if (r.status !== Office.AsyncResultStatus.Succeeded) { reject(new Error(r.error && r.error.message || "ek okunamadı")); return; }
         if (r.value.format !== Office.MailboxEnums.AttachmentContentFormat.Base64) { reject(new Error("desteklenmeyen ek biçimi: " + r.value.format)); return; }
         resolve(r.value.content);
@@ -438,13 +457,13 @@
   }
   // Ekler sırayla yazılır; biri düşerse diğerleri devam eder, sonuç mesajda özetlenir.
   function saveAttachments(emailId) {
-    var list = state.mail.attachments || [];
+    var list = state.mail.attachments || [], item = state.mail.item;
     if (!$("saveAtt").checked || !list.length) return Promise.resolve();
     state.attResult = { ok: 0, fail: [] };
     return list.reduce(function (chain, a) {
       return chain.then(function () {
         if (a.size > ATT_LIMIT) { state.attResult.fail.push(a.name + " (çok büyük)"); return; }
-        return attachmentContent(a.id).then(function (b64) {
+        return attachmentContent(a.id, item).then(function (b64) {
           return api("POST", "activitymimeattachments", {
             "objectid_email@odata.bind": "/emails(" + emailId + ")", objecttypecode: "email",
             filename: a.name, subject: a.name, mimetype: a.type || "application/octet-stream", body: b64
@@ -460,51 +479,193 @@
     return s;
   }
 
-  function onSave() {
-    var btn = $("btnSave"); btn.disabled = true; showMsg("", "");
-    if (state.tab === "mail") {
-      if (!state.account && !state.contacts.length) { showMsg("err", "Bağlanacak firma ya da kişi seçin."); btn.disabled = false; return; }
-      if (state.mail.existingEmailId) { showMsg("ok", "Bu e-posta zaten CRM'de kayıtlı.", { href: recordUrl("email", state.mail.existingEmailId), text: "CRM'de aç" }); btn.disabled = false; return; }
+  /* MÜKERRER KAYIT (30.09.2026, Emel Hn: "kapattığım görev hâlâ listede"). Canlıda 5 görev
+     çifti: ikinci kopya 5-15 sn sonra, e-postasız — başarıdan sonra düğme yeniden açılıyordu,
+     kullanıcı ikinci kez bastı; birini kapatınca ikizi günlük listede kaldı. Üç kat:
+     1) Başarıdan sonra düğme KİLİTLİ kalır, yerinde "Oluşturuldu — CRM'de aç" bağlantısı
+        durur. Kilit yalnız başka sekme ya da başka e-posta yüklenince kalkar.
+     2) Kaydedilen e-postanın kimliği e-postanın durumuna yazılır: tekrar kayıt aynı e-postayı
+        ikinci kez POST etmez, yeni görevi var olan e-postaya bağlar.
+     3) Görev POST'undan önce sunucuya sorulur (findOpenTwins): bu e-postaya bağlı açık görev
+        ya da aynı kullanıcının son 10 dakikada aynı konuyla açtığı görev varsa panelde onay
+        istenir. Office eklentisinde confirm()/alert() çalışmaz; soru panelin içinde.
+     Sorgu düşerse kayıt ENGELLENMEZ — denetim yardımcıdır, kullanıcının işini durdurmaz.
+     Durum: busy = istek yolda, asking = onay bekleniyor, done = kilit {tab, etn, id, text}. */
+  /* Yayın geçişi: GitHub Pages ?v= damgasını yok sayar; önbellekteki ESKİ taskpane.html yeni
+     betikle açılabilir. O sayfada btnOpen yok — bağlantı burada eklenir, düğme ölü kalmaz. */
+  function openLink() {
+    var a = $("btnOpen");
+    if (!a) {
+      a = document.createElement("a"); a.id = "btnOpen"; a.className = "btn done"; a.target = "_blank"; a.rel = "noopener"; a.hidden = true;
+      var b = $("btnSave"); if (b && b.parentNode) b.parentNode.appendChild(a);
+    }
+    return a;
+  }
+  /* Bilerek ikinci kayıt (ör. aynı e-postadan başka birine görev): kilit tek tıkla kalkar.
+     Kaza kopyasını yine findOpenTwins sorusu yakalar, kilit zayıflamaz. HTML'de değil,
+     burada eklenir — önbellekteki eski taskpane.html'de de çalışsın. */
+  var ANOTHER_TEXT = { task: "Bu e-postadan başka görev aç", appt: "Bu e-postadan başka toplantı aç", expo: "Bu e-postadan başka fuar notu aç" };
+  function anotherBtn() {
+    var b = $("btnAnother");
+    if (!b) {
+      b = document.createElement("button"); b.id = "btnAnother"; b.type = "button"; b.className = "btn sec"; b.hidden = true;
+      var o = openLink(); if (o && o.parentNode) o.parentNode.appendChild(b);
+    }
+    if (!b.liyBound) {
+      b.liyBound = true;
+      b.addEventListener("click", function () {
+        if (!state.done || state.done.tab !== state.tab || state.busy) return;
+        state.done = null; showMsg("", ""); syncSaveBtn();
+      });
+    }
+    return b;
+  }
+  function syncSaveBtn() {
+    var btn = $("btnSave"), open = openLink(), again = anotherBtn();
+    var d = state.done && state.done.tab === state.tab ? state.done : null;
+    btn.hidden = !!d;
+    btn.disabled = !!(d || state.busy || state.asking || state.loading || !state.mail);
+    open.hidden = !d;
+    again.hidden = !(d && ANOTHER_TEXT[d.tab]);
+    if (!again.hidden) again.textContent = ANOTHER_TEXT[d.tab];
+    if (d) {
+      open.textContent = d.text;
+      if (d.id) open.href = recordUrl(d.etn, d.id); else open.removeAttribute("href");
+    }
+  }
+  // Uçuştaki kayıt bitti: kilitle ya da serbest bırak; bu sırada e-posta değiştiyse şimdi yükle.
+  function endSave(tab, done) {
+    state.busy = false;
+    state.done = done ? { tab: tab, etn: done.etn, id: done.id, text: done.text || "Oluşturuldu — CRM'de aç" } : null;
+    if (state.reloadPending) { state.reloadPending = false; reloadItem(true); return; }
+    syncSaveBtn();
+  }
+
+  function onSave(ev, confirmed) {
+    if (state.done && state.done.tab === state.tab) return;   // kilitli: ne görev ne e-posta yazılır
+    if (state.busy || state.asking || state.loading) return;   // loading: gövde henüz okunmadı
+    if (!state.mail) { showMsg("err", "E-posta okunamadı; paneli kapatıp yeniden açın."); return; }
+    var tab = state.tab, m = state.mail;
+    state.busy = true; syncSaveBtn(); showMsg("", "");
+    if (tab === "mail") {
+      if (!state.account && !state.contacts.length) { showMsg("err", "Bağlanacak firma ya da kişi seçin."); endSave(tab); return; }
+      if (m.existingEmailId) { showMsg("ok", "Bu e-posta zaten CRM'de kayıtlı.", { href: recordUrl("email", m.existingEmailId), text: "CRM'de aç" }); endSave(tab); return; }
       saveEmailActivity(true)
-        .then(function (id) { showMsg("ok", "E-posta CRM'e kaydedildi ve bağlandı." + attSummary(), { href: recordUrl("email", id), text: "CRM'de aç" }); state.mail.existingEmailId = id; })
-        .catch(function (e) { showMsg("err", "E-posta kaydedilemedi: " + e.message); })
-        .then(function () { btn.disabled = false; });
+        .then(function (id) {
+          m.existingEmailId = id;
+          showMsg("ok", "E-posta CRM'e kaydedildi ve bağlandı." + attSummary(), { href: recordUrl("email", id), text: "CRM'de aç" });
+          endSave(tab, { etn: "email", id: id, text: "Kaydedildi — CRM'de aç" });
+        }, function (e) { showMsg("err", "E-posta kaydedilemedi: " + e.message); endSave(tab); });
       return;
     }
     var spec;
     try {
       if (!$("subject").value.trim()) throw new Error("Konu boş olamaz.");
-      spec = state.tab === "task" ? buildTask() : state.tab === "appt" ? buildAppt() : buildExpo();
-    } catch (e) { showMsg("err", e.message); btn.disabled = false; return; }
+      spec = tab === "task" ? buildTask() : tab === "appt" ? buildAppt() : buildExpo();
+    } catch (e) { showMsg("err", e.message); endSave(tab); return; }
+    var guard = spec.etn === "task" && !confirmed ? findOpenTwins(spec.body.subject) : Promise.resolve([]);
+    guard.then(function (twins) {
+      if (state.reloadPending) { endSave(tab); return; }        // bu arada başka e-postaya geçildi
+      if (twins.length) { askDuplicate(twins); return; }
+      return createRecord(spec, m, tab);
+    }).catch(function (e) { showMsg("err", "Kayıt oluşturulamadı: " + e.message); endSave(tab); });
+  }
+
+  function createRecord(spec, m, tab) {
     var created = null;
-    api("POST", spec.set, spec.body)
+    return api("POST", spec.set, spec.body)
       .then(function (r) { created = r.id; return saveEmailActivity(); })
-      .then(function (emailId) { return linkTaskToEmail(spec, created, emailId).then(function () { return emailId; }); })
       .then(function (emailId) {
-        var extra = emailId ? " E-posta da kaydedildi." + attSummary() : "";
-        showMsg("ok", spec.label + " oluşturuldu." + extra, { href: recordUrl(spec.etn, created), text: "CRM'de aç" });
+        if (emailId) m.existingEmailId = emailId;   // 2) tekrar kayıtta e-posta ikinci kez POST edilmez
+        return linkTaskToEmail(spec, created, emailId).then(function (warn) { return { emailId: emailId, warn: warn }; });
+      })
+      .then(function (r) {
+        var link = { href: recordUrl(spec.etn, created), text: "CRM'de aç" };
+        if (r.warn) showMsg("err", r.warn, link);
+        else showMsg("ok", spec.label + " oluşturuldu." + (r.emailId ? " E-posta da kaydedildi." + attSummary() : ""), link);
+        endSave(tab, { etn: spec.etn, id: created });
       })
       .catch(function (e) {
-        if (created) showMsg("err", spec.label + " oluşturuldu ama e-posta kaydedilemedi: " + e.message, { href: recordUrl(spec.etn, created), text: "CRM'de aç" });
-        else showMsg("err", "Kayıt oluşturulamadı: " + e.message);
+        if (created) {
+          // Kayıt açıldı: yeniden denemek ikinci kopya açar, düğme kilitli kalır.
+          showMsg("err", spec.label + " oluşturuldu ama e-posta kaydedilemedi: " + e.message + " — tekrar basmayın; e-postayı 'Yalnız E-posta' sekmesinden kaydedebilirsiniz.", { href: recordUrl(spec.etn, created), text: "CRM'de aç" });
+          endSave(tab, { etn: spec.etn, id: created });
+        } else { showMsg("err", "Kayıt oluşturulamadı: " + e.message); endSave(tab); }
+      });
+  }
+
+  var TWIN_MINUTES = 10;
+  function rowsOf(r) { return (r && r.value) || []; }
+  // Her ayak kendi hatasını yutar: denetim düşerse boş liste döner, kayıt engellenmez.
+  function findOpenTwins(subject) {
+    var byMail = Promise.resolve()
+      .then(function () { return state.mail.existingEmailId ? null : checkExistingEmail(); })
+      .then(function () {
+        var eid = state.mail.existingEmailId;
+        if (!eid) return [];
+        return api("GET", "tasks?$select=activityid,subject&$filter=_zeno_emailid_value eq " + eid + " and statecode eq 0&$orderby=createdon desc&$top=5").then(rowsOf)
+          .then(function (rows) { return rows.map(function (t) { return { activityid: t.activityid, subject: t.subject, via: "mail" }; }); });
       })
-      .then(function () { btn.disabled = false; });
+      .catch(function (e) { diag("mükerrer denetimi (e-posta) düştü: " + e.message); return []; });
+    var bySubject = Promise.resolve()
+      .then(function () {
+        var since = new Date(Date.now() - TWIN_MINUTES * 60000).toISOString();
+        var f = "subject eq '" + lit(subject) + "' and createdon ge " + since;
+        if (state.userId) f += " and _createdby_value eq " + state.userId;
+        return api("GET", "tasks?$select=activityid,subject&$filter=" + f + "&$orderby=createdon desc&$top=5").then(rowsOf);
+      })
+      .catch(function (e) { diag("mükerrer denetimi (konu) düştü: " + e.message); return []; });
+    return Promise.all([byMail, bySubject]).then(function (r) {
+      var seen = {}, out = [];
+      r[0].concat(r[1]).forEach(function (t) {
+        if (t && t.activityid && !seen[t.activityid]) { seen[t.activityid] = true; out.push({ id: t.activityid, subject: t.subject || "", via: t.via || "subject" }); }
+      });
+      return out;
+    });
+  }
+
+  function askDuplicate(twins) {
+    state.busy = false; state.asking = true; syncSaveBtn();
+    // "err warn": eski önbellekli sayfada .msg.warn kuralı yok, .msg.err kutuyu yine görünür kılar.
+    var el = $("msg"); el.className = "msg err warn"; el.textContent = "";
+    // Konu ayağı BAŞKA bir e-postadan açılmış görevi de bulabilir (aynı konulu yazışma):
+    // "bu e-postadan" demek o zaman yanlış olurdu.
+    var fromMail = twins.some(function (t) { return t.via === "mail"; });
+    el.appendChild(document.createTextNode(fromMail
+      ? "Bu e-postadan açılmış görev var — yine de yeni görev açılsın mı? "
+      : "Son " + TWIN_MINUTES + " dakikada aynı konulu bir görev açtınız — yine de yeni görev açılsın mı? "));
+    var a = document.createElement("a"); a.href = recordUrl("task", twins[0].id); a.target = "_blank"; a.rel = "noopener";
+    a.textContent = (twins[0].subject || "Görev") + " — CRM'de aç"; el.appendChild(a);
+    if (twins.length > 1) el.appendChild(document.createTextNode(" (+" + (twins.length - 1) + " görev daha)"));
+    var row = document.createElement("div"); row.className = "ask";
+    var yes = document.createElement("button"); yes.type = "button"; yes.className = "btn"; yes.textContent = "Evet, yeni görev aç";
+    var no = document.createElement("button"); no.type = "button"; no.className = "btn sec"; no.textContent = "Vazgeç";
+    yes.addEventListener("click", function () { if (!state.asking) return; state.asking = false; onSave(null, true); });
+    no.addEventListener("click", function () { if (!state.asking) return; state.asking = false; showMsg("", ""); syncSaveBtn(); });
+    row.appendChild(yes); row.appendChild(no); el.appendChild(row);
+    try { no.focus(); } catch (e) { /* odak zorunlu değil */ }
   }
 
   /* GÖREV → KAYNAK E-POSTA (14.09.2026, Furkan: "task üzerinde email lookup'ını da
      koyabilir miyiz?"). Görevde toplantı/telefon kaynak lookup'ları gibi zeno_emailid
      (Kaynak E-posta) var; bind adı metadata'dan: zeno_EmailId_Task. E-posta bu turda
      kaydedildiyse o, zaten CRM'de varsa mevcut kayıt bağlanır. Bağ kurulamazsa görev
-     yine de kalır — hata mesajda söylenir, kayıt geri alınmaz. */
+     yine de kalır — hata mesajda söylenir, kayıt geri alınmaz. Uyarı METİN olarak döner:
+     eskiden burada gösterilip hemen ardından "oluşturuldu" mesajıyla eziliyordu. */
   function linkTaskToEmail(spec, taskId, emailId) {
     var eid = emailId || (state.mail && state.mail.existingEmailId);
     if (spec.etn !== "task" || !taskId || !eid) return Promise.resolve();
     return api("PATCH", "tasks(" + taskId + ")", { "zeno_EmailId_Task@odata.bind": "/emails(" + eid + ")" })
-      .catch(function (e) { showMsg("err", "Görev oluşturuldu ama e-postaya bağlanamadı: " + e.message); });
+      .then(function () { return ""; }, function (e) { return "Görev oluşturuldu ama e-postaya bağlanamadı: " + e.message; });
   }
 
   /* ---------- sekmeler ---------- */
   function selectTab(name) {
+    if (name !== state.tab) {
+      // Kilit yalnız başka sekmeye geçince kalkar (aynı sekmede kutu değişimi kilidi açmaz); bekleyen soru düşer.
+      if (state.asking) { state.asking = false; showMsg("", ""); }
+      state.done = null;
+    }
     state.tab = name;
     document.querySelectorAll(".tabs [role=tab]").forEach(function (b) { b.setAttribute("aria-selected", String(b.dataset.tab === name)); });
     $("pTask").hidden = name !== "task"; $("pAppt").hidden = name !== "appt"; $("pExpo").hidden = name !== "expo"; $("pMail").hidden = name !== "mail";
@@ -512,6 +673,46 @@
     $("fSubject").hidden = mailOnly; $("fDesc").hidden = mailOnly; $("fSaveMail").hidden = mailOnly;
     $("fSaveAtt").hidden = !(state.mail && state.mail.attachments.length) || (!mailOnly && !$("saveMail").checked);
     $("btnSave").textContent = mailOnly ? "E-postayı CRM'e bağla" : "CRM'de oluştur";
+    syncSaveBtn();
+  }
+
+  /* ---------- sabitlenmiş panel: başka e-posta seçilince ---------- */
+  /* manifest SupportsPinning=true; ItemChanged dinlenmezse panel eski e-postanın konusu, kişisi
+     ve kilidiyle kalıyordu. Kayıt yoldayken gelen değişim, kayıt bitince uygulanır — yoksa
+     yolda olan kayıt yeni e-postanın durumuna yazardı. */
+  function onItemChanged() {
+    if (state.busy) { state.reloadPending = true; return; }
+    reloadItem(false);
+  }
+  function reloadItem(keepMsg) {
+    state.done = null; state.asking = false; state.attResult = null;
+    if (!keepMsg) showMsg("", "");
+    setAccount(null); state.contacts = []; renderContacts();
+    $("matchHint").textContent = ""; $("mLinked").textContent = "";
+    $("desc").value = "";                          // önceki e-postanın açıklaması yeni konuyla kalmasın
+    $("saveMail").checked = true; $("saveAtt").checked = true; $("fSaveAtt").hidden = true;
+    if (!Office.context.mailbox.item) {           // Outlook masaüstü: hiçbir öğe seçili değil
+      state.mail = null; state.loading = false;
+      $("mSubject").textContent = "—"; $("mFrom").textContent = ""; $("mDate").textContent = "";
+      $("subject").value = ""; $("desc").value = "";
+      syncSaveBtn(); return;
+    }
+    var p;
+    try { p = readMail(); } catch (e) { state.mail = null; state.loading = false; showMsg("err", "E-posta okunamadı: " + e.message); syncSaveBtn(); return; }
+    syncSaveBtn();
+    p.then(autoMatch).catch(function (e) { showMsg("err", e.message); });
+  }
+  var itemWatch = false;
+  function watchItem() {
+    if (itemWatch) return; itemWatch = true;
+    try {
+      var mb = Office.context.mailbox;
+      if (mb && mb.addHandlerAsync && Office.EventType && Office.EventType.ItemChanged) {
+        mb.addHandlerAsync(Office.EventType.ItemChanged, onItemChanged, function (r) {
+          if (r && r.status !== Office.AsyncResultStatus.Succeeded) diag("ItemChanged kaydedilemedi: " + (r.error && r.error.message));
+        });
+      }
+    } catch (e) { diag("ItemChanged: " + e.message); }
   }
 
   /* ---------- başlat ---------- */
@@ -550,6 +751,7 @@
 
   function start() {
     $("login").style.display = "none"; $("app").hidden = false;
+    watchItem();
     readMail().then(loadLists).then(autoMatch).catch(function (e) { showMsg("err", e.message); });
   }
 

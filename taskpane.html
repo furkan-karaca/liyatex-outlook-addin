@@ -7,8 +7,8 @@
 <!-- Toplantı/Fuar Notu sekmeleri şimdilik gizli (hidden); açmak için düğmelerden hidden kaldır.
      office.js Microsoft tarafından sürümlenir; SRI pinlemesi resmi olarak desteklenmez. -->
 <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-<script src="lib/msal-browser.min.js?v=202609161612"></script>
-<script src="config.js?v=202609161612"></script>
+<script src="lib/msal-browser.min.js?v=202610010931"></script>
+<script src="config.js?v=202610010931"></script>
 <style>
   :root{--ink:#1f2933;--mut:#6b7280;--line:#e5e7eb;--brand:#0f6278;--brand2:#0b4f61;--ok:#166534;--okbg:#dcfce7;--err:#991b1b;--errbg:#fee2e2;--bg:#fff}
   *{box-sizing:border-box}
@@ -42,9 +42,13 @@
   .btn{padding:9px 12px;border-radius:6px;border:1px solid var(--brand);background:var(--brand);color:#fff;font:inherit;font-weight:600;cursor:pointer;flex:1}
   .btn.sec{background:#fff;color:var(--brand)}
   .btn[disabled]{opacity:.5;cursor:default}
+  a.btn{display:block;text-align:center;text-decoration:none}
+  .btn.done{background:var(--okbg);border-color:var(--ok);color:var(--ok)}
+  .ask{display:flex;gap:8px;margin-top:8px}
   .msg{margin-top:10px;padding:8px 10px;border-radius:6px;font-size:12px;display:none;word-break:break-word}
   .msg.ok{display:block;background:var(--okbg);color:var(--ok)}
   .msg.err{display:block;background:var(--errbg);color:var(--err)}
+  .msg.warn{display:block;background:#fef3c7;color:#92400e}
   .msg a{color:inherit;font-weight:600}
   .hint{font-size:11px;color:var(--mut);margin-top:4px}
   #login{display:none;text-align:center;padding:30px 12px}
@@ -154,10 +158,11 @@
 
   <div class="actions">
     <button class="btn" id="btnSave" type="button">CRM'de oluştur</button>
+    <a class="btn done" id="btnOpen" target="_blank" rel="noopener" hidden></a>
   </div>
-  <div class="msg" id="msg"></div>
+  <div class="msg" id="msg" role="status" aria-live="polite"></div>
 </main>
 
-<script src="taskpane.js?v=202609161612"></script>
+<script src="taskpane.js?v=202610010931"></script>
 </body>
 </html>
