@@ -156,12 +156,18 @@
         if (typeof nat.showPicker === "function") { try { nat.showPicker(); return; } catch (e) { /* aşağı düş */ } }
         nat.style.pointerEvents = "auto"; nat.style.opacity = "1"; nat.style.width = "auto"; nat.style.height = "auto"; nat.focus(); nat.click();
       });
+      /* Mac Outlook (WebKit) showPicker vermez; yedek yolda seçici görünür yapılır. Eskiden yalnız
+         tarih DEĞİŞİNCE gizleniyordu: kullanıcı seçmeden vazgeçince takvim ekranda açık kalıyordu
+         (07.10 toplantısı). Artık odak çıkınca ve Escape'te de kapanır. */
+      function gizle() { nat.style.pointerEvents = ""; nat.style.opacity = ""; nat.style.width = ""; nat.style.height = ""; }
       nat.addEventListener("change", function () {
         if (!nat.value) return;
         var d = new Date(nat.value);
         txt.value = withTime ? localDT(d) : fmtDate(d);
-        nat.style.pointerEvents = ""; nat.style.opacity = ""; nat.style.width = ""; nat.style.height = "";
+        gizle();
       });
+      nat.addEventListener("blur", function () { setTimeout(gizle, 200); });
+      nat.addEventListener("keydown", function (e) { if (e.key === "Escape" || e.key === "Enter") { gizle(); txt.focus(); } });
     });
   }
 
